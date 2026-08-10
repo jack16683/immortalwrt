@@ -10,7 +10,8 @@ This fork builds Ethan's x86_64 VM firmware on the first day of every month.
 - `kenzo`, `nikki`, and `OpenClash` update from their configured branches each run.
 - The resolved third-party feed commits are included with every release.
 - Third-party feeds are disabled in runtime `distfeeds` to avoid invalid `packages.adb` URLs.
-- Firmware releases include compressed BIOS/EFI IMG and QCOW2 images, manifests, and SHA256 checksums.
+- Fresh installations use login user `root` with an empty password; the prepare step fails if upstream or an overlay changes this default.
+- Firmware releases include every generated top-level x86_64 firmware image: BIOS/EFI IMG, QCOW2, VMDK, rootfs archives, kernel, manifests, and SHA256 checksums. ImageBuilder, SDK, and the per-package repository are excluded.
 
 ## Schedule
 

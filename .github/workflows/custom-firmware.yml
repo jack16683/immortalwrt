@@ -82,7 +82,7 @@ jobs:
         if: always()
         run: ccache --show-stats || true
 
-      - name: Collect firmware and metadata
+      - name: Collect all x86_64 firmware and metadata
         if: success()
         shell: bash
         run: |
@@ -91,43 +91,31 @@ jobs:
           output_dir="release-assets"
           mkdir -p "$output_dir"
 
-          patterns=(
-            '*-ext4-combined.img.gz'
-            '*-ext4-combined-efi.img.gz'
-            '*-ext4-combined.qcow2.gz'
-            '*-ext4-combined-efi.qcow2.gz'
-            '*-squashfs-combined.img.gz'
-            '*-squashfs-combined-efi.img.gz'
-            '*.manifest'
-            'profiles.json'
-            'version.buildinfo'
-            'feeds.buildinfo'
-            'config.buildinfo'
-          )
-          for pattern in "${patterns[@]}"; do
-            find "$target_dir" -maxdepth 1 -type f -name "$pattern" -exec cp -v {} "$output_dir/" \;
-          done
+          # Publish every top-level firmware image and build manifest. Exclude
+          # ImageBuilder/SDK archives and the per-package repository. Hard links
+          # avoid duplicating roughly 1.7 GB inside the runner workspace.
+          while IFS= read -r -d '' file; do
+            name="$(basename "$file")"
+            case "$name" in
+              immortalwrt-imagebuilder-*|immortalwrt-sdk-*) continue ;;
+            esac
+            ln "$file" "$output_dir/$name"
+          done < <(find "$target_dir" -maxdepth 1 -type f -print0)
           cp -v build-metadata/* "$output_dir/"
 
-          if ! find "$output_dir" -maxdepth 1 -type f -name '*.img.gz' -print -quit | grep -q .; then
-            echo 'error: no flashable x86_64 image was produced' >&2
-            exit 1
-          fi
+          for format in '*.img.gz' '*.qcow2' '*.qcow2.gz' '*.vmdk' '*.vmdk.gz'; do
+            if ! find "$output_dir" -maxdepth 1 -type f -name "$format" -print -quit | grep -q .; then
+              echo "error: expected x86_64 image format was not produced: $format" >&2
+              exit 1
+            fi
+          done
           (
             cd "$output_dir"
-            sha256sum * > SHA256SUMS
+            find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\0' \
+              | sort -z \
+              | xargs -0 sha256sum > SHA256SUMS
           )
           find "$output_dir" -maxdepth 1 -type f -printf '%f\t%s bytes\n' | sort
-
-      - name: Upload firmware artifact
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: immortalwrt-v25.12.1-x86_64-${{ github.run_number }}
-          path: release-assets/
-          if-no-files-found: error
-          retention-days: 30
-          compression-level: 0
 
       - name: Upload build log
         if: always()

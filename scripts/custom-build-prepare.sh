@@ -17,6 +17,19 @@ if [[ -n "$unexpected" ]]; then
   exit 1
 fi
 
+if ! grep -qx 'root:x:0:0:root:/root:/bin/ash' package/base-files/files/etc/passwd; then
+  echo 'error: default login user is no longer root' >&2
+  exit 1
+fi
+if ! grep -qx 'root:::0:99999:7:::' package/base-files/files/etc/shadow; then
+  echo 'error: default root password is no longer empty' >&2
+  exit 1
+fi
+if [[ -e files/etc/passwd || -e files/etc/shadow ]]; then
+  echo 'error: custom passwd/shadow overlay could override the empty root password' >&2
+  exit 1
+fi
+
 for feed in kenzo nikki openclash; do
   if grep -Eq "^src-git ${feed}[[:space:]]" feeds.conf.default; then
     echo "error: duplicate custom feed: $feed" >&2
