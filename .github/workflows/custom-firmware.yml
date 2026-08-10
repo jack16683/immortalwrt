@@ -26,7 +26,7 @@ jobs:
 
     steps:
       - name: Checkout custom v25.12.1 branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -50,7 +50,7 @@ jobs:
             upx-ucl unzip vim wget xmlto xxd zlib1g-dev zstd
 
       - name: Restore downloads and compiler cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             dl
@@ -119,7 +119,7 @@ jobs:
 
       - name: Upload build log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: build-log-${{ github.run_number }}
           path: |
