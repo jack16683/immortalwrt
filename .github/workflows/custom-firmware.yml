@@ -1,0 +1,187 @@
+name: Monthly custom ImmortalWrt x86_64
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 10:00 on the first day of every month in Asia/Shanghai (02:00 UTC).
+    - cron: "0 2 1 * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: monthly-custom-immortalwrt
+  cancel-in-progress: false
+
+env:
+  TZ: Asia/Shanghai
+  CCACHE_DIR: ${{ github.workspace }}/.ccache
+  FORCE_UNSAFE_CONFIGURE: "1"
+
+jobs:
+  build:
+    name: Build v25.12.1 x86_64 firmware
+    runs-on: ubuntu-22.04
+    timeout-minutes: 355
+
+    steps:
+      - name: Checkout custom v25.12.1 branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          sudo apt-get clean
+          df -h /
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
+            bzip2 ccache clang cmake cpio curl device-tree-compiler ecj fastjar flex gawk gettext gcc-multilib \
+            g++-multilib git gnutls-dev gperf haveged help2man intltool lib32gcc-s1 libc6-dev-i386 libelf-dev \
+            libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses-dev libpython3-dev \
+            libreadline-dev libssl-dev libtool libyaml-dev libz-dev lld llvm lrzsz mkisofs msmtp nano \
+            ninja-build p7zip p7zip-full patch pkgconf python3 python3-pip python3-ply python3-docutils \
+            python3-pyelftools qemu-utils re2c rsync scons squashfs-tools subversion swig texinfo uglifyjs \
+            upx-ucl unzip vim wget xmlto xxd zlib1g-dev zstd
+
+      - name: Restore downloads and compiler cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            dl
+            .ccache
+          key: iwrt-v25.12.1-${{ runner.os }}-${{ hashFiles('config.seed', 'feeds.conf.append') }}-${{ github.run_number }}
+          restore-keys: |
+            iwrt-v25.12.1-${{ runner.os }}-${{ hashFiles('config.seed', 'feeds.conf.append') }}-
+            iwrt-v25.12.1-${{ runner.os }}-
+
+      - name: Prepare feeds and configuration
+        run: bash scripts/custom-build-prepare.sh
+
+      - name: Configure ccache
+        run: |
+          ccache --max-size=5G
+          ccache --zero-stats
+
+      - name: Download source archives
+        run: make download -j"$(nproc)"
+
+      - name: Build firmware
+        id: compile
+        shell: bash
+        run: |
+          set -o pipefail
+          make -j"$(nproc)" 2>&1 | tee build.log
+
+      - name: Show ccache statistics
+        if: always()
+        run: ccache --show-stats || true
+
+      - name: Collect firmware and metadata
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          target_dir="bin/targets/x86/64"
+          output_dir="release-assets"
+          mkdir -p "$output_dir"
+
+          patterns=(
+            '*-ext4-combined.img.gz'
+            '*-ext4-combined-efi.img.gz'
+            '*-ext4-combined.qcow2.gz'
+            '*-ext4-combined-efi.qcow2.gz'
+            '*-squashfs-combined.img.gz'
+            '*-squashfs-combined-efi.img.gz'
+            '*.manifest'
+            'profiles.json'
+            'version.buildinfo'
+            'feeds.buildinfo'
+            'config.buildinfo'
+          )
+          for pattern in "${patterns[@]}"; do
+            find "$target_dir" -maxdepth 1 -type f -name "$pattern" -exec cp -v {} "$output_dir/" \;
+          done
+          cp -v build-metadata/* "$output_dir/"
+
+          if ! find "$output_dir" -maxdepth 1 -type f -name '*.img.gz' -print -quit | grep -q .; then
+            echo 'error: no flashable x86_64 image was produced' >&2
+            exit 1
+          fi
+          (
+            cd "$output_dir"
+            sha256sum * > SHA256SUMS
+          )
+          find "$output_dir" -maxdepth 1 -type f -printf '%f\t%s bytes\n' | sort
+
+      - name: Upload firmware artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: immortalwrt-v25.12.1-x86_64-${{ github.run_number }}
+          path: release-assets/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-${{ github.run_number }}
+          path: |
+            build.log
+            build-metadata/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Publish GitHub release
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="firmware-v25.12.1-$(date +%Y%m%d)-${GITHUB_RUN_NUMBER}"
+          cat > release-notes.md <<EOF
+          Automated monthly custom ImmortalWrt x86_64 firmware.
+
+          - Base: ImmortalWrt v25.12.1
+          - Base commit: a3378d1a2c15beb2faf4b0bce9c00f07143efa29
+          - Build run: ${GITHUB_RUN_ID}
+          - Built at: $(date '+%Y-%m-%d %H:%M:%S %Z')
+          - Custom feed commits: see custom-feeds.tsv
+          - Verify downloads with SHA256SUMS
+          EOF
+          mapfile -t assets < <(find release-assets -maxdepth 1 -type f -print | sort)
+          gh release create "$tag" "${assets[@]}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "ImmortalWrt v25.12.1 custom x86_64 $(date +%Y-%m-%d)" \
+            --notes-file release-notes.md
+          echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
+
+      - name: Record successful build activity
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build-history
+          cat > build-history/latest.md <<EOF
+          # Latest successful firmware build
+
+          - Release: ${RELEASE_TAG}
+          - Base: ImmortalWrt v25.12.1
+          - Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+          - Beijing time: $(date '+%Y-%m-%d %H:%M:%S %Z')
+          EOF
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add build-history/latest.md
+          git commit -m "build: record ${RELEASE_TAG}"
+          git push origin "HEAD:${{ github.event.repository.default_branch }}"

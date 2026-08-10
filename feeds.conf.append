@@ -1,0 +1,5 @@
+# Custom feeds are intentionally left on their upstream branches.
+# Each monthly build records the exact resolved commit in custom-feeds.tsv.
+src-git kenzo https://github.com/kenzok8/openwrt-packages
+src-git nikki https://github.com/nikkinikki-org/OpenWrt-nikki.git;main
+src-git openclash https://github.com/vernesong/OpenClash.git;master
