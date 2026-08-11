@@ -1,6 +1,6 @@
 # Custom monthly ImmortalWrt firmware
 
-This fork builds Ethan's x86_64 VM firmware on the first day of every month.
+This fork builds Ethan's x86_64 VM firmware on Ubuntu 24.04 on the first day of every month.
 
 ## Build policy
 

@@ -21,7 +21,7 @@ env:
 jobs:
   build:
     name: Build v25.12.1 x86_64 firmware
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 355
 
     steps:
@@ -50,7 +50,8 @@ jobs:
             upx-ucl unzip vim wget xmlto xxd zlib1g-dev zstd
 
       - name: Restore downloads and compiler cache
-        uses: actions/cache@v6
+        id: build-cache
+        uses: actions/cache/restore@v6
         with:
           path: |
             dl
@@ -82,6 +83,16 @@ jobs:
         if: always()
         run: ccache --show-stats || true
 
+      - name: Save downloads and compiler cache
+        if: always()
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            dl
+            .ccache
+          key: ${{ steps.build-cache.outputs.cache-primary-key }}
+
       - name: Collect all x86_64 firmware and metadata
         if: success()
         shell: bash
@@ -97,7 +108,7 @@ jobs:
           while IFS= read -r -d '' file; do
             name="$(basename "$file")"
             case "$name" in
-              immortalwrt-imagebuilder-*|immortalwrt-sdk-*) continue ;;
+              immortalwrt-imagebuilder-*|immortalwrt-sdk-*|sha256sums) continue ;;
             esac
             ln "$file" "$output_dir/$name"
           done < <(find "$target_dir" -maxdepth 1 -type f -print0)
