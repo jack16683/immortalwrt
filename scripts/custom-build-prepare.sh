@@ -62,6 +62,21 @@ required=(
   CONFIG_PACKAGE_mihomo-meta
   CONFIG_PACKAGE_luci-app-lucky
   CONFIG_PACKAGE_luci-app-tailscale-community
+  CONFIG_PACKAGE_luci-app-netdata
+  CONFIG_PACKAGE_luci-app-statistics
+  CONFIG_PACKAGE_luci-app-zerotier
+  CONFIG_PACKAGE_luci-app-upnp
+  CONFIG_PACKAGE_luci-app-autoreboot
+  CONFIG_PACKAGE_luci-app-ttyd
+  CONFIG_PACKAGE_luci-app-wol
+  CONFIG_PACKAGE_kmod-tcp-bbr
+  CONFIG_PACKAGE_kmod-e1000
+  CONFIG_PACKAGE_kmod-e1000e
+  CONFIG_PACKAGE_kmod-vmxnet3
+  CONFIG_PACKAGE_kmod-usb-core
+  CONFIG_PACKAGE_kmod-usb-hid
+  CONFIG_TARGET_ROOTFS_EXT4FS
+  CONFIG_TARGET_ROOTFS_SQUASHFS
   CONFIG_QCOW2_IMAGES
   CONFIG_VMDK_IMAGES
 )
@@ -71,6 +86,67 @@ for symbol in "${required[@]}"; do
     exit 1
   fi
 done
+
+forbidden_packages=(
+  attendedsysupgrade-common
+  luci-app-attendedsysupgrade
+  luci-i18n-attendedsysupgrade-zh-cn
+  rpcd-mod-rpcsys
+  ddns-scripts
+  ddns-scripts-services
+  qemu-ga
+  open-vm-tools
+  automount
+  i915-firmware-dmc
+  kmod-8139cp
+  kmod-8139too
+  kmod-amazon-ena
+  kmod-amd-xgbe
+  kmod-bnx2
+  kmod-drm-i915
+  kmod-dwmac-intel
+  kmod-forcedeth
+  kmod-fs-exfat
+  kmod-fs-f2fs
+  kmod-fs-ntfs3
+  kmod-i40e
+  kmod-igb
+  kmod-igbvf
+  kmod-igc
+  kmod-ixgbe
+  kmod-ixgbevf
+  kmod-pcnet32
+  kmod-r8101
+  kmod-r8125
+  kmod-r8126
+  kmod-r8168
+  kmod-tg3
+  kmod-tulip
+  kmod-usb-net
+  kmod-usb-net-asix
+  kmod-usb-net-asix-ax88179
+  kmod-usb-net-rtl8150
+  kmod-usb-net-rtl8152-vendor
+  kmod-usb-storage
+  kmod-usb-storage-extras
+  kmod-usb-storage-uas
+)
+for package in "${forbidden_packages[@]}"; do
+  if grep -qx "CONFIG_PACKAGE_${package}=y" .config; then
+    echo "error: forbidden VM-image package was enabled: $package" >&2
+    exit 1
+  fi
+done
+
+if grep -qx 'CONFIG_ALL_KMODS=y' .config; then
+  echo 'error: CONFIG_ALL_KMODS must remain disabled' >&2
+  exit 1
+fi
+
+if ! grep -qx 'CONFIG_EXT4_FS=y' target/linux/x86/config-6.12; then
+  echo 'error: x86 kernel no longer has built-in ext4 support' >&2
+  exit 1
+fi
 
 if ! grep -qx 'CONFIG_TARGET_ROOTFS_PARTSIZE=1024' .config; then
   echo 'error: rootfs partition size must remain 1024 MiB' >&2
