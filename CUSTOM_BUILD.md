@@ -4,11 +4,11 @@ This repository builds Ethan's x86_64 VM firmware on Ubuntu 24.04 on the first d
 
 ## Build policy
 
-- Each run clones the latest ImmortalWrt `openwrt-25.12` stable branch instead of rebuilding a fixed historical release commit.
-- The official `packages`, `luci`, `routing`, `telephony`, and `video` feeds follow their matching `openwrt-25.12` branches as declared by upstream ImmortalWrt.
+- Each run clones the latest upstream ImmortalWrt `master` branch instead of rebuilding a fixed release or stable branch snapshot.
+- The official `packages`, `luci`, `routing`, `telephony`, and `video` feeds use the declarations shipped by the current upstream `master`; on current ImmortalWrt master these are rolling feeds, so `feeds update -a` resolves their latest commits on every build.
 - `kenzo`, `nikki`, and `OpenClash` update from their configured upstream branches each run.
-- Every successful release records the exact ImmortalWrt base SHA plus all official and third-party feed SHAs in `source-revisions.tsv`, so the inputs remain traceable even though the build tracks moving stable branches.
-- The custom repository is used as a build overlay/configuration repository; upstream ImmortalWrt source is cloned fresh into a separate build directory by GitHub Actions.
+- Every successful release records the exact ImmortalWrt base SHA plus all official and third-party feed SHAs in `source-revisions.tsv`, so every rolling build remains traceable.
+- This fork is used as a build overlay/configuration repository. GitHub Actions clones fresh upstream ImmortalWrt source into a separate build directory for each run, so the firmware does not depend on how far this custom branch appears ahead of or behind the upstream repository in GitHub's fork comparison UI.
 - Third-party feeds are disabled in runtime `distfeeds` to avoid invalid `packages.adb` URLs.
 - Fresh installations use login user `root` with an empty password; the prepare step fails if upstream changes this default.
 - Attended Sysupgrade and DDNS clients are intentionally excluded; custom firmware upgrades come from this repository's verified GitHub Releases, while DDNS is handled externally.
@@ -23,10 +23,10 @@ GitHub Actions runs at 10:00 Asia/Shanghai on the first day of each month. The w
 
 ## Local preparation check
 
-The prepare script is intended to run from a clean clone of the ImmortalWrt stable source tree while pointing at this repository as the overlay. For example:
+The prepare script is intended to run from a clean clone of current upstream ImmortalWrt master while pointing at this repository as the overlay. For example:
 
 ```bash
-git clone --branch openwrt-25.12 --single-branch https://github.com/immortalwrt/immortalwrt.git source
+git clone --branch master --single-branch https://github.com/immortalwrt/immortalwrt.git source
 cd source
 CUSTOM_BUILD_OVERLAY_ROOT=/path/to/this/repository \
   bash /path/to/this/repository/scripts/custom-build-prepare.sh
