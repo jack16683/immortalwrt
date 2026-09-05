@@ -2,6 +2,11 @@ name: Monthly custom ImmortalWrt x86_64
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - custom-v25.12.1
+    paths:
+      - .github/workflows/custom-firmware.yml
   schedule:
     # 10:00 on the first day of every month in Asia/Shanghai (02:00 UTC).
     - cron: "0 2 1 * *"
