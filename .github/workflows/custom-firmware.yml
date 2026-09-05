@@ -15,12 +15,12 @@ concurrency:
 
 env:
   TZ: Asia/Shanghai
-  IMMORTALWRT_BRANCH: openwrt-25.12
+  IMMORTALWRT_BRANCH: master
   FORCE_UNSAFE_CONFIGURE: "1"
 
 jobs:
   build:
-    name: Build latest 25.12 x86_64 firmware
+    name: Build latest ImmortalWrt master x86_64 firmware
     runs-on: ubuntu-24.04
     timeout-minutes: 355
 
@@ -31,7 +31,7 @@ jobs:
           path: overlay
           fetch-depth: 0
 
-      - name: Checkout latest ImmortalWrt 25.12 source
+      - name: Checkout latest ImmortalWrt master source
         shell: bash
         run: |
           set -euo pipefail
@@ -67,10 +67,10 @@ jobs:
           path: |
             source/dl
             source/.ccache
-          key: iwrt-25.12-${{ runner.os }}-${{ hashFiles('overlay/config.seed', 'overlay/feeds.conf.append') }}-${{ github.run_number }}
+          key: iwrt-master-${{ runner.os }}-${{ hashFiles('overlay/config.seed', 'overlay/feeds.conf.append') }}-${{ github.run_number }}
           restore-keys: |
-            iwrt-25.12-${{ runner.os }}-${{ hashFiles('overlay/config.seed', 'overlay/feeds.conf.append') }}-
-            iwrt-25.12-${{ runner.os }}-
+            iwrt-master-${{ runner.os }}-${{ hashFiles('overlay/config.seed', 'overlay/feeds.conf.append') }}-
+            iwrt-master-${{ runner.os }}-
 
       - name: Prepare feeds and configuration
         working-directory: source
@@ -131,9 +131,6 @@ jobs:
           output_dir="release-assets"
           mkdir -p "$output_dir"
 
-          # Publish every top-level firmware image and build manifest. Exclude
-          # ImageBuilder/SDK archives and the per-package repository. Hard links
-          # avoid duplicating large firmware artifacts inside the runner workspace.
           while IFS= read -r -d '' file; do
             name="$(basename "$file")"
             case "$name" in
@@ -177,9 +174,9 @@ jobs:
           set -euo pipefail
           base_commit="$(git -C source rev-parse HEAD)"
           short_base="${base_commit:0:12}"
-          tag="firmware-25.12-$(date +%Y%m%d)-${GITHUB_RUN_NUMBER}"
+          tag="firmware-master-$(date +%Y%m%d)-${GITHUB_RUN_NUMBER}"
           cat > release-notes.md <<EOF
-          Automated monthly custom ImmortalWrt x86_64 firmware built from the latest stable 25.12 branch.
+          Automated monthly custom ImmortalWrt x86_64 firmware built from the latest upstream master and current feeds.
 
           - Base branch: ImmortalWrt ${IMMORTALWRT_BRANCH}
           - Base commit: ${base_commit}
@@ -193,7 +190,7 @@ jobs:
           gh release create "$tag" "${assets[@]}" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
-            --title "ImmortalWrt 25.12 custom x86_64 $(date +%Y-%m-%d)" \
+            --title "ImmortalWrt master custom x86_64 $(date +%Y-%m-%d)" \
             --notes-file release-notes.md
           echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
           echo "BASE_COMMIT=$base_commit" >> "$GITHUB_ENV"
