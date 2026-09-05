@@ -1,19 +1,30 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly BASE_COMMIT="a3378d1a2c15beb2faf4b0bce9c00f07143efa29"
+readonly UPSTREAM_BRANCH="${IMMORTALWRT_BRANCH:-openwrt-25.12}"
+readonly OVERLAY_ROOT="${CUSTOM_BUILD_OVERLAY_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 readonly META_DIR="${BUILD_META_DIR:-build-metadata}"
-readonly ALLOWED_PATHS_RE='^(\.github/workflows/custom-firmware\.yml|CUSTOM_BUILD\.md|config\.seed|feeds\.conf\.append|scripts/custom-build-prepare\.sh|build-history/)'
 
-if ! git merge-base --is-ancestor "$BASE_COMMIT" HEAD; then
-  echo "error: current branch is not based on ImmortalWrt v25.12.1 ($BASE_COMMIT)" >&2
+source_root="$(git rev-parse --show-toplevel)"
+if [[ "$source_root" != "$PWD" ]]; then
+  echo "error: run the prepare script from the root of the cloned ImmortalWrt source tree" >&2
   exit 1
 fi
 
-unexpected="$(git diff --name-only "$BASE_COMMIT"...HEAD | grep -Ev "$ALLOWED_PATHS_RE" || true)"
-if [[ -n "$unexpected" ]]; then
-  echo "error: upstream source files were changed outside the custom build overlay:" >&2
-  printf '%s\n' "$unexpected" >&2
+current_branch="$(git branch --show-current)"
+if [[ "$current_branch" != "$UPSTREAM_BRANCH" ]]; then
+  echo "error: expected ImmortalWrt branch $UPSTREAM_BRANCH, got ${current_branch:-detached HEAD}" >&2
+  exit 1
+fi
+
+origin_url="$(git remote get-url origin 2>/dev/null || true)"
+if [[ "$origin_url" != *"immortalwrt/immortalwrt"* ]]; then
+  echo "error: source tree origin is not ImmortalWrt/immortalwrt: $origin_url" >&2
+  exit 1
+fi
+
+if ! git diff --quiet || ! git diff --cached --quiet; then
+  echo 'error: upstream source tree must be clean before applying the build configuration' >&2
   exit 1
 fi
 
@@ -30,13 +41,28 @@ if [[ -e files/etc/passwd || -e files/etc/shadow ]]; then
   exit 1
 fi
 
+for required_file in config.seed feeds.conf.append; do
+  if [[ ! -f "$OVERLAY_ROOT/$required_file" ]]; then
+    echo "error: missing build overlay file: $OVERLAY_ROOT/$required_file" >&2
+    exit 1
+  fi
+done
+
+# The stable ImmortalWrt branch owns the matching official feed branches.
+# Keep those declarations untouched and append only the third-party feeds.
+for feed in packages luci routing telephony video; do
+  if ! grep -Eq "^src-git ${feed}[[:space:]].*;${UPSTREAM_BRANCH}$" feeds.conf.default; then
+    echo "error: official feed $feed is not tracking $UPSTREAM_BRANCH" >&2
+    exit 1
+  fi
+done
 for feed in kenzo nikki openclash; do
   if grep -Eq "^src-git ${feed}[[:space:]]" feeds.conf.default; then
     echo "error: duplicate custom feed: $feed" >&2
     exit 1
   fi
 done
-cat feeds.conf.append >> feeds.conf.default
+cat "$OVERLAY_ROOT/feeds.conf.append" >> feeds.conf.default
 
 ./scripts/feeds update -a
 ./scripts/feeds install -a
@@ -52,7 +78,7 @@ if [[ "$openclash_path" != "$PWD/feeds/openclash/luci-app-openclash" ]]; then
   exit 1
 fi
 
-cp config.seed .config
+cp "$OVERLAY_ROOT/config.seed" .config
 make defconfig
 
 required=(
@@ -143,7 +169,8 @@ if grep -qx 'CONFIG_ALL_KMODS=y' .config; then
   exit 1
 fi
 
-if ! grep -qx 'CONFIG_EXT4_FS=y' target/linux/x86/config-6.12; then
+kernel_config="$(find target/linux/x86 -maxdepth 1 -type f -name 'config-*' | sort -V | tail -n1)"
+if [[ -z "$kernel_config" ]] || ! grep -qx 'CONFIG_EXT4_FS=y' "$kernel_config"; then
   echo 'error: x86 kernel no longer has built-in ext4 support' >&2
   exit 1
 fi
@@ -163,12 +190,25 @@ done
 mkdir -p "$META_DIR"
 ./scripts/diffconfig.sh > "$META_DIR/config.effective"
 cp feeds.conf.default "$META_DIR/feeds.effective"
+
+base_commit="$(git rev-parse HEAD)"
 {
-  printf 'base\t%s\n' "$BASE_COMMIT"
+  printf 'base\t%s\t%s\n' "$base_commit" "$origin_url"
+  for feed in packages luci routing telephony video kenzo nikki openclash; do
+    printf '%s\t%s\t%s\n' \
+      "$feed" \
+      "$(git -C "feeds/$feed" rev-parse HEAD)" \
+      "$(git -C "feeds/$feed" remote get-url origin)"
+  done
+} > "$META_DIR/source-revisions.tsv"
+
+{
+  printf 'base\t%s\n' "$base_commit"
   for feed in kenzo nikki openclash; do
     printf '%s\t%s\n' "$feed" "$(git -C "feeds/$feed" rev-parse HEAD)"
   done
 } > "$META_DIR/custom-feeds.tsv"
 
 echo 'Prepared configuration:'
+echo "ImmortalWrt ${UPSTREAM_BRANCH}: ${base_commit}"
 grep -E '^(CONFIG_TARGET_|CONFIG_PACKAGE_(luci-app-openclash|luci-compat|mihomo-meta|luci-app-lucky|luci-app-tailscale-community)|CONFIG_TARGET_ROOTFS_PARTSIZE|CONFIG_QCOW2_IMAGES|CONFIG_VMDK_IMAGES)' .config
