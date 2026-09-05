@@ -15,20 +15,31 @@ concurrency:
 
 env:
   TZ: Asia/Shanghai
-  CCACHE_DIR: ${{ github.workspace }}/.ccache
+  IMMORTALWRT_BRANCH: openwrt-25.12
   FORCE_UNSAFE_CONFIGURE: "1"
 
 jobs:
   build:
-    name: Build v25.12.1 x86_64 firmware
+    name: Build latest 25.12 x86_64 firmware
     runs-on: ubuntu-24.04
     timeout-minutes: 355
 
     steps:
-      - name: Checkout custom v25.12.1 branch
+      - name: Checkout custom build configuration
         uses: actions/checkout@v7
         with:
+          path: overlay
           fetch-depth: 0
+
+      - name: Checkout latest ImmortalWrt 25.12 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone \
+            --branch "$IMMORTALWRT_BRANCH" \
+            --single-branch \
+            https://github.com/immortalwrt/immortalwrt.git source
+          echo "ImmortalWrt source: $(git -C source rev-parse HEAD)"
 
       - name: Free runner disk space
         run: |
@@ -54,33 +65,51 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: |
-            dl
-            .ccache
-          key: iwrt-v25.12.1-${{ runner.os }}-${{ hashFiles('config.seed', 'feeds.conf.append') }}-${{ github.run_number }}
+            source/dl
+            source/.ccache
+          key: iwrt-25.12-${{ runner.os }}-${{ hashFiles('overlay/config.seed', 'overlay/feeds.conf.append') }}-${{ github.run_number }}
           restore-keys: |
-            iwrt-v25.12.1-${{ runner.os }}-${{ hashFiles('config.seed', 'feeds.conf.append') }}-
-            iwrt-v25.12.1-${{ runner.os }}-
+            iwrt-25.12-${{ runner.os }}-${{ hashFiles('overlay/config.seed', 'overlay/feeds.conf.append') }}-
+            iwrt-25.12-${{ runner.os }}-
 
       - name: Prepare feeds and configuration
-        run: bash scripts/custom-build-prepare.sh
+        working-directory: source
+        env:
+          CUSTOM_BUILD_OVERLAY_ROOT: ${{ github.workspace }}/overlay
+          BUILD_META_DIR: build-metadata
+        run: bash ../overlay/scripts/custom-build-prepare.sh
 
       - name: Configure ccache
+        working-directory: source
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/source/.ccache
         run: |
           ccache --max-size=5G
           ccache --zero-stats
 
       - name: Download source archives
+        working-directory: source
         run: make download -j"$(nproc)"
 
       - name: Build firmware
         id: compile
+        working-directory: source
         shell: bash
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/source/.ccache
         run: |
           set -o pipefail
-          make -j"$(nproc)" 2>&1 | tee build.log
+          if ! make -j"$(nproc)" 2>&1 | tee build.log; then
+            echo 'Parallel build failed; retrying single-threaded with verbose output for diagnosis.' | tee -a build.log
+            make -j1 V=s 2>&1 | tee -a build.log || true
+            exit 1
+          fi
 
       - name: Show ccache statistics
         if: always()
+        working-directory: source
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/source/.ccache
         run: ccache --show-stats || true
 
       - name: Save downloads and compiler cache
@@ -89,8 +118,8 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: |
-            dl
-            .ccache
+            source/dl
+            source/.ccache
           key: ${{ steps.build-cache.outputs.cache-primary-key }}
 
       - name: Collect all x86_64 firmware and metadata
@@ -98,13 +127,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          target_dir="bin/targets/x86/64"
+          target_dir="source/bin/targets/x86/64"
           output_dir="release-assets"
           mkdir -p "$output_dir"
 
           # Publish every top-level firmware image and build manifest. Exclude
           # ImageBuilder/SDK archives and the per-package repository. Hard links
-          # avoid duplicating roughly 1.7 GB inside the runner workspace.
+          # avoid duplicating large firmware artifacts inside the runner workspace.
           while IFS= read -r -d '' file; do
             name="$(basename "$file")"
             case "$name" in
@@ -112,7 +141,7 @@ jobs:
             esac
             ln "$file" "$output_dir/$name"
           done < <(find "$target_dir" -maxdepth 1 -type f -print0)
-          cp -v build-metadata/* "$output_dir/"
+          cp -v source/build-metadata/* "$output_dir/"
 
           for format in '*.img.gz' '*.qcow2' '*.qcow2.gz' '*.vmdk' '*.vmdk.gz'; do
             if ! find "$output_dir" -maxdepth 1 -type f -name "$format" -print -quit | grep -q .; then
@@ -134,8 +163,8 @@ jobs:
         with:
           name: build-log-${{ github.run_number }}
           path: |
-            build.log
-            build-metadata/
+            source/build.log
+            source/build-metadata/
           if-no-files-found: warn
           retention-days: 14
 
@@ -146,27 +175,32 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          tag="firmware-v25.12.1-$(date +%Y%m%d)-${GITHUB_RUN_NUMBER}"
+          base_commit="$(git -C source rev-parse HEAD)"
+          short_base="${base_commit:0:12}"
+          tag="firmware-25.12-$(date +%Y%m%d)-${GITHUB_RUN_NUMBER}"
           cat > release-notes.md <<EOF
-          Automated monthly custom ImmortalWrt x86_64 firmware.
+          Automated monthly custom ImmortalWrt x86_64 firmware built from the latest stable 25.12 branch.
 
-          - Base: ImmortalWrt v25.12.1
-          - Base commit: a3378d1a2c15beb2faf4b0bce9c00f07143efa29
+          - Base branch: ImmortalWrt ${IMMORTALWRT_BRANCH}
+          - Base commit: ${base_commit}
+          - Base short SHA: ${short_base}
           - Build run: ${GITHUB_RUN_ID}
           - Built at: $(date '+%Y-%m-%d %H:%M:%S %Z')
-          - Custom feed commits: see custom-feeds.tsv
+          - Exact base and feed revisions: see source-revisions.tsv
           - Verify downloads with SHA256SUMS
           EOF
           mapfile -t assets < <(find release-assets -maxdepth 1 -type f -print | sort)
           gh release create "$tag" "${assets[@]}" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
-            --title "ImmortalWrt v25.12.1 custom x86_64 $(date +%Y-%m-%d)" \
+            --title "ImmortalWrt 25.12 custom x86_64 $(date +%Y-%m-%d)" \
             --notes-file release-notes.md
           echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
+          echo "BASE_COMMIT=$base_commit" >> "$GITHUB_ENV"
 
       - name: Record successful build activity
         if: success()
+        working-directory: overlay
         shell: bash
         run: |
           set -euo pipefail
@@ -175,7 +209,8 @@ jobs:
           # Latest successful firmware build
 
           - Release: ${RELEASE_TAG}
-          - Base: ImmortalWrt v25.12.1
+          - Base branch: ImmortalWrt ${IMMORTALWRT_BRANCH}
+          - Base commit: ${BASE_COMMIT}
           - Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
           - Beijing time: $(date '+%Y-%m-%d %H:%M:%S %Z')
           EOF
