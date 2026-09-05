@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly UPSTREAM_BRANCH="${IMMORTALWRT_BRANCH:-openwrt-25.12}"
+readonly UPSTREAM_BRANCH="${IMMORTALWRT_BRANCH:-master}"
 readonly OVERLAY_ROOT="${CUSTOM_BUILD_OVERLAY_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 readonly META_DIR="${BUILD_META_DIR:-build-metadata}"
 
@@ -48,11 +48,12 @@ for required_file in config.seed feeds.conf.append; do
   fi
 done
 
-# The stable ImmortalWrt branch owns the matching official feed branches.
-# Keep those declarations untouched and append only the third-party feeds.
+# Use the official feed declarations exactly as shipped by the current
+# upstream branch. On master these are rolling feeds, so feeds update -a
+# resolves their latest current commits on every build.
 for feed in packages luci routing telephony video; do
-  if ! grep -Eq "^src-git ${feed}[[:space:]].*;${UPSTREAM_BRANCH}$" feeds.conf.default; then
-    echo "error: official feed $feed is not tracking $UPSTREAM_BRANCH" >&2
+  if ! grep -Eq "^src-git ${feed}[[:space:]]" feeds.conf.default; then
+    echo "error: expected official feed is missing from upstream feeds.conf.default: $feed" >&2
     exit 1
   fi
 done
@@ -67,7 +68,7 @@ cat "$OVERLAY_ROOT/feeds.conf.append" >> feeds.conf.default
 ./scripts/feeds update -a
 ./scripts/feeds install -a
 
-# The official LuCI feed also carries luci-app-openclash. Force the package
+# The official LuCI feed can also carry luci-app-openclash. Force the package
 # link to the explicitly configured vernesong/OpenClash feed.
 rm -f package/feeds/luci/luci-app-openclash
 rm -f package/feeds/kenzo/luci-app-openclash
