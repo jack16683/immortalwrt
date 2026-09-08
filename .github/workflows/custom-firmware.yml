@@ -30,6 +30,29 @@ jobs:
         with:
           path: overlay
           fetch-depth: 0
+          persist-credentials: true
+
+      - name: Check release permission before compiling
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" != "refs/heads/$DEFAULT_BRANCH" ]]; then
+            echo 'Run this publishing workflow from the default configuration branch.' >&2
+            exit 1
+          fi
+          tag="firmware-master-$(date +%Y%m%d)-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
+          # Resolve an existing branch ref while it is current, before the long build.
+          # A draft tests the actual release API using the job's temporary token.
+          gh release create "$tag" --repo "$GITHUB_REPOSITORY" \
+            --target "$DEFAULT_BRANCH" --draft \
+            --title "ImmortalWrt master custom x86_64 $(date +%Y-%m-%d)" \
+            --notes "Build in progress: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
 
       - name: Checkout latest ImmortalWrt master source
         shell: bash
@@ -165,7 +188,17 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+      - name: Back up firmware before release publishing
+        uses: actions/upload-artifact@v7
+        with:
+          name: firmware-${{ github.run_number }}-${{ github.run_attempt }}
+          path: release-assets/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
       - name: Publish GitHub release
+        id: publish
         if: success()
         env:
           GH_TOKEN: ${{ github.token }}
@@ -174,33 +207,48 @@ jobs:
           set -euo pipefail
           base_commit="$(git -C source rev-parse HEAD)"
           short_base="${base_commit:0:12}"
-          tag="firmware-master-$(date +%Y%m%d)-${GITHUB_RUN_NUMBER}"
+          tag="$RELEASE_TAG"
           cat > release-notes.md <<EOF
           Automated monthly custom ImmortalWrt x86_64 firmware built from the latest upstream master and current feeds.
 
           - Base branch: ImmortalWrt ${IMMORTALWRT_BRANCH}
           - Base commit: ${base_commit}
           - Base short SHA: ${short_base}
+          - Configuration commit: ${GITHUB_SHA}
           - Build run: ${GITHUB_RUN_ID}
           - Built at: $(date '+%Y-%m-%d %H:%M:%S %Z')
           - Exact base and feed revisions: see source-revisions.tsv
           - Verify downloads with SHA256SUMS
           EOF
           mapfile -t assets < <(find release-assets -maxdepth 1 -type f -print | sort)
-          gh release create "$tag" "${assets[@]}" \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
-            --title "ImmortalWrt master custom x86_64 $(date +%Y-%m-%d)" \
-            --notes-file release-notes.md
-          echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
+          gh release upload "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" \
+            --notes-file release-notes.md --draft=false --latest
           echo "BASE_COMMIT=$base_commit" >> "$GITHUB_ENV"
 
-      - name: Record successful build activity
-        if: success()
-        working-directory: overlay
+      - name: Remove unpublished draft after failure
+        if: ${{ always() && steps.release.outputs.tag != '' && steps.publish.outcome != 'success' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
+          # Never delete a release that was published despite an interrupted response.
+          if [[ "$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" == true ]]; then
+            gh release delete "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --yes
+          fi
+
+      - name: Record successful build activity
+        if: success()
+        continue-on-error: true
+        working-directory: overlay
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin "$DEFAULT_BRANCH"
+          git checkout -B build-activity "origin/$DEFAULT_BRANCH"
           mkdir -p build-history
           cat > build-history/latest.md <<EOF
           # Latest successful firmware build
@@ -215,4 +263,4 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add build-history/latest.md
           git commit -m "build: record ${RELEASE_TAG}"
-          git push origin "HEAD:${{ github.event.repository.default_branch }}"
+          git push origin "HEAD:$DEFAULT_BRANCH"

@@ -33,3 +33,11 @@ CUSTOM_BUILD_OVERLAY_ROOT=/path/to/this/repository \
 ```
 
 The full compile is intentionally performed by GitHub Actions.
+
+## Release reliability
+
+The workflow first creates an unpublished draft against the default configuration branch using the temporary `GITHUB_TOKEN`. This verifies release permission before compiling and avoids creating a release against an old workflow commit after a long build. Manual publishing runs must select the default branch.
+
+After compilation, firmware is also saved as a 14-day Actions artifact. Assets are uploaded to the draft before it is published as the latest release. Failed builds remove their unpublished draft and leave previous published releases intact. Release notes record the exact configuration commit as well as upstream revisions; the draft target is the default branch resolved at preflight.
+
+Successful build activity is committed on top of the current default branch, preserving configuration changes made during compilation. A history-write failure is nonfatal because the firmware release is already published.
